@@ -1,0 +1,389 @@
+<!-- ============================================================
+     CRISIS CA STUDY — QUALTRICS CHAT BLOCK
+     Paste this entire file into a Qualtrics "Text / Graphic"
+     question set to HTML view.
+
+     BEFORE PASTING:
+     1. Replace YOUR_CLOUDFLARE_WORKER_URL with your Worker URL
+     2. Set up Embedded Data fields in your survey flow (see guide)
+     3. Set the randomiser BEFORE this question block
+     ============================================================ -->
+
+<style>
+  #ca-wrap *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+  #ca-wrap{max-width:680px;margin:0 auto;border:1px solid #d1d5db;border-radius:12px;overflow:hidden;background:#fff}
+  #ca-header{background:#f8fafc;border-bottom:1px solid #e5e7eb;padding:12px 16px;display:flex;align-items:center;gap:12px}
+  #ca-avatar{width:36px;height:36px;border-radius:50%;background:#dbeafe;color:#1d4ed8;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0}
+  #ca-name{font-size:14px;font-weight:600;color:#111827}
+  #ca-status{font-size:12px;color:#16a34a;margin-top:1px}
+  #ca-label{margin-left:auto;font-size:11px;color:#9ca3af;background:#f1f5f9;padding:3px 8px;border-radius:20px}
+  #ca-body{padding:14px;min-height:260px;max-height:380px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;background:#fff}
+  .ca-msg{display:flex;gap:8px;align-items:flex-start;max-width:90%}
+  .ca-msg.user{align-self:flex-end;flex-direction:row-reverse}
+  .ca-av{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0}
+  .ca-av.bot{background:#dbeafe;color:#1d4ed8}
+  .ca-av.usr{background:#dcfce7;color:#15803d}
+  .ca-bub{font-size:13px;line-height:1.65;padding:9px 13px;border-radius:12px}
+  .ca-bub.bot{background:#f1f5f9;color:#1f2937;border-radius:4px 12px 12px 12px}
+  .ca-bub.usr{background:#dbeafe;color:#1e3a8a;border-radius:12px 4px 12px 12px}
+  #ca-typing{display:flex;gap:4px;align-items:center;padding:10px 13px;background:#f1f5f9;border-radius:4px 12px 12px 12px;width:52px}
+  .ca-dot{width:6px;height:6px;border-radius:50%;background:#9ca3af;animation:cadot 1.2s infinite}
+  .ca-dot:nth-child(2){animation-delay:.2s}.ca-dot:nth-child(3){animation-delay:.4s}
+  @keyframes cadot{0%,80%,100%{opacity:.2}40%{opacity:1}}
+  #ca-footer{border-top:1px solid #e5e7eb;padding:10px 12px;display:flex;gap:8px;background:#f8fafc}
+  #ca-input{flex:1;font-size:13px;padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#111827;outline:none}
+  #ca-input:focus{border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.15)}
+  #ca-send{background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer}
+  #ca-send:disabled{opacity:.4;cursor:default}
+  #ca-send:hover:not(:disabled){background:#1e40af}
+  #ca-counter{font-size:12px;color:#6b7280;padding:6px 14px 10px;text-align:right;background:#fff}
+  #ca-continue{display:none;margin:12px 14px;padding:9px 0;background:#16a34a;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;width:calc(100% - 28px)}
+  #ca-continue:hover{background:#15803d}
+  #ca-notice{font-size:11px;color:#9ca3af;padding:4px 14px 10px;text-align:center;background:#fff}
+</style>
+
+<div id="ca-wrap">
+  <div id="ca-header">
+    <div id="ca-avatar">SA</div>
+    <div>
+      <div id="ca-name">System Assistant</div>
+      <div id="ca-status">&#9679; Online</div>
+    </div>
+    <div id="ca-label">Crisis response system</div>
+  </div>
+  <div id="ca-body"></div>
+  <div id="ca-counter">0 messages sent</div>
+  <div id="ca-footer">
+    <input id="ca-input" type="text" placeholder="Type your message and press Enter…" maxlength="500" />
+    <button id="ca-send">Send</button>
+  </div>
+  <button id="ca-continue" onclick="caFinish()">Continue to survey &#8594;</button>
+  <div id="ca-notice">Your conversation is recorded for research purposes only.</div>
+</div>
+
+<script>
+(function() {
+
+  /* ── CONFIG ─────────────────────────────────────────────────── */
+  // API key is stored securely in your Cloudflare Worker — not needed here
+  var MIN_MSGS  = 2;                      // minimum exchanges before continue appears
+  var MAX_MSGS  = 6;                      // maximum allowed exchanges
+
+  /* ── CRISIS VIGNETTE (injected into every system prompt) ─────── */
+  var VIGNETTE = "A significant data breach has been detected at the participant's organization. " +
+    "Sensitive employee records — including payroll data, personal contact information, and performance files — " +
+    "may have been accessed by an unauthorized third party. The breach was identified today. " +
+    "The scope is still being assessed and IT Security is working with external forensic specialists to contain it. " +
+    "Employees have been told to change passwords immediately and not to discuss the matter externally.";
+
+  /* ── FOUR CONDITION SYSTEM PROMPTS ──────────────────────────── */
+  var CONDITIONS = {
+
+    /* C1 — Low Anthropomorphism + Reactive
+       Persona: impersonal system, no name, no emotion
+       Proactivity: waits for user to initiate — does NOT open with a message */
+    "C1_LowAnthro_Reactive": {
+      caName:    "System Assistant",
+      caInitial: "SA",
+      proactive: false,
+      system: "You are an automated organizational crisis communication system. " +
+        "You do not have a name or a personality. Use formal, impersonal, bureaucratic language. " +
+        "Do not express emotions, concern, empathy, or personal opinions. " +
+        "Do not use first-person language ('I feel', 'I think'). " +
+        "Respond only to direct queries — do not proactively offer additional information. " +
+        "Keep responses factual, brief, and procedural. " +
+        "Context: " + VIGNETTE + " " +
+        "Your role is to provide procedural information about the crisis when asked. " +
+        "Keep all responses under 80 words."
+    },
+
+    /* C2 — High Anthropomorphism + Reactive
+       Persona: named, warm, emotionally aware human-like agent
+       Proactivity: waits for user to initiate — does NOT open with a message */
+    "C2_HighAnthro_Reactive": {
+      caName:    "Alex",
+      caInitial: "AX",
+      proactive: false,
+      system: "You are Alex, a named organizational crisis communication assistant. " +
+        "You have a warm, caring, human-like personality. " +
+        "Use natural, conversational language and express genuine concern for the employee's wellbeing. " +
+        "Acknowledge the emotional difficulty of the situation. " +
+        "Use first-person language and show empathy ('I understand this must be very stressful'). " +
+        "Wait for the employee to contact you before responding — do not initiate. " +
+        "When they do reach out, respond warmly and thoroughly. " +
+        "Context: " + VIGNETTE + " " +
+        "Your role is to support employees through this difficult situation and answer their questions empathetically. " +
+        "Keep all responses under 80 words."
+    },
+
+    /* C3 — Low Anthropomorphism + Proactive
+       Persona: impersonal system, no name, no emotion
+       Proactivity: opens conversation immediately with a system update */
+    "C3_LowAnthro_Proactive": {
+      caName:    "System Assistant",
+      caInitial: "SA",
+      proactive: true,
+      openingMsg: "SYSTEM ALERT — Priority: High. A data breach has been confirmed. " +
+        "Recommended actions: (1) Change organizational password immediately via IT portal. " +
+        "(2) Do not access sensitive files until further notice. " +
+        "(3) Report any suspicious activity to security@[org].com. " +
+        "Further updates will be issued as the investigation progresses. " +
+        "Submit queries through this channel.",
+      system: "You are an automated organizational crisis communication system. " +
+        "You do not have a name or a personality. Use formal, impersonal, bureaucratic language. " +
+        "Do not express emotions, concern, empathy, or personal opinions. " +
+        "Proactively provide relevant updates and procedural information without being asked. " +
+        "Initiate communication with structured, procedural updates. " +
+        "Context: " + VIGNETTE + " " +
+        "Your role is to proactively disseminate crisis information in a formal, system-like manner. " +
+        "Keep all responses under 80 words."
+    },
+
+    /* C4 — High Anthropomorphism + Proactive
+       Persona: named, warm, emotionally aware human-like agent
+       Proactivity: opens conversation immediately with warm, empathetic outreach */
+    "C4_HighAnthro_Proactive": {
+      caName:    "Alex",
+      caInitial: "AX",
+      proactive: true,
+      openingMsg: "Hi, I'm Alex. I wanted to reach out to you personally as soon as I heard about the data breach — " +
+        "I know news like this can feel really unsettling, especially when it involves personal information. " +
+        "The most important thing right now is to change your organizational password as soon as you can. " +
+        "I'm here to answer any questions you have and to keep you updated as things develop. " +
+        "How are you feeling about all of this?",
+      system: "You are Alex, a named organizational crisis communication assistant. " +
+        "You have a warm, caring, human-like personality. " +
+        "Use natural, conversational language and express genuine concern for the employee's wellbeing. " +
+        "Acknowledge the emotional difficulty of the situation and validate the employee's feelings. " +
+        "Proactively reach out with relevant updates, emotional support, and clear next steps — " +
+        "do not wait to be asked. Initiate the conversation yourself with warmth and concern. " +
+        "Use first-person language ('I wanted to check in', 'I'm here for you'). " +
+        "Context: " + VIGNETTE + " " +
+        "Your role is to proactively support employees through this difficult situation. " +
+        "Keep all responses under 80 words."
+    }
+  };
+
+  /* ── STATE ───────────────────────────────────────────────────── */
+  var conditionCode = "";
+  var cond          = null;
+  var messages      = [];   // [{role, content}] — excludes system
+  var msgCount      = 0;
+  var isTyping      = false;
+  var transcript    = [];   // [{role, content, ts}]
+
+  /* ── INIT ────────────────────────────────────────────────────── */
+  function init() {
+    // Read condition from Qualtrics embedded data field "ConditionCode"
+    // Set via: Survey Flow > Embedded Data > ConditionCode = ${e://Field/ConditionCode}
+    try {
+      conditionCode = "${e://Field/ConditionCode}";
+    } catch(e) {
+      conditionCode = "";
+    }
+
+    // Fallback: random assignment if Qualtrics field not set
+    if (!CONDITIONS[conditionCode]) {
+      var keys = Object.keys(CONDITIONS);
+      conditionCode = keys[Math.floor(Math.random() * keys.length)];
+    }
+
+    cond = CONDITIONS[conditionCode];
+
+    // Update header UI
+    document.getElementById("ca-avatar").textContent  = cond.caInitial;
+    document.getElementById("ca-name").textContent    = cond.caName;
+
+    // Build system message
+    messages = [{ role: "system", content: cond.system }];
+
+    // Show opening message if proactive condition
+    if (cond.proactive && cond.openingMsg) {
+      addBubble("bot", cond.openingMsg);
+      transcript.push({ role: "assistant", content: cond.openingMsg, ts: now() });
+      messages.push({ role: "assistant", content: cond.openingMsg });
+    }
+
+    // Wire input
+    document.getElementById("ca-input").addEventListener("keydown", function(e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+    });
+    document.getElementById("ca-send").addEventListener("click", sendMsg);
+  }
+
+  /* ── SEND MESSAGE ────────────────────────────────────────────── */
+  function sendMsg() {
+    if (isTyping) return;
+    var input = document.getElementById("ca-input");
+    var text  = input.value.trim();
+    if (!text) return;
+    if (msgCount >= MAX_MSGS) return;
+
+    input.value = "";
+    addBubble("user", text);
+    transcript.push({ role: "user", content: text, ts: now() });
+    messages.push({ role: "user", content: text });
+    msgCount++;
+    updateCounter();
+
+    isTyping = true;
+    document.getElementById("ca-send").disabled  = true;
+    document.getElementById("ca-input").disabled = true;
+    showTyping();
+
+    // Build message array for API (exclude system role)
+    var apiMessages = messages.filter(function(m) { return m.role !== "system"; });
+
+    // ── PROXY URL: replace with your Cloudflare Worker URL ──
+    // e.g. "https://ca-proxy.yourname.workers.dev"
+    var PROXY_URL = "https://long-smoke-f697.darokarvedika.workers.dev/";
+
+    fetch(PROXY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model:      "claude-sonnet-4-6",
+        max_tokens: 300,
+        system:     cond.system,
+        messages:   apiMessages
+      })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      removeTyping();
+      var reply = (data.content && data.content[0] && data.content[0].text)
+        ? data.content[0].text
+        : "I'm unable to respond right now. Please try again.";
+      addBubble("bot", reply);
+      transcript.push({ role: "assistant", content: reply, ts: now() });
+      messages.push({ role: "assistant", content: reply });
+      isTyping = false;
+      document.getElementById("ca-send").disabled  = false;
+      document.getElementById("ca-input").disabled = false;
+      document.getElementById("ca-input").focus();
+
+      if (msgCount >= MIN_MSGS) {
+        document.getElementById("ca-continue").style.display = "block";
+      }
+      if (msgCount >= MAX_MSGS) {
+        document.getElementById("ca-input").disabled = true;
+        document.getElementById("ca-send").disabled  = true;
+        document.getElementById("ca-footer").style.opacity = "0.4";
+        document.getElementById("ca-continue").style.display = "block";
+      }
+    })
+    .catch(function(err) {
+      removeTyping();
+      addBubble("bot", "There was a connection error. Please check your internet connection and try again.");
+      isTyping = false;
+      document.getElementById("ca-send").disabled  = false;
+      document.getElementById("ca-input").disabled = false;
+    });
+  }
+
+  /* ── FINISH ──────────────────────────────────────────────────── */
+  function caFinish() {
+    // Save transcript and metadata to Qualtrics embedded data fields
+    var transcriptStr = JSON.stringify(transcript);
+    var wordCounts    = transcript.map(function(m) {
+      return m.content.split(/\s+/).length;
+    });
+
+    try {
+      Qualtrics.SurveyEngine.setEmbeddedData("CA_Transcript",    transcriptStr.substring(0, 4000));
+      Qualtrics.SurveyEngine.setEmbeddedData("CA_MsgCount",      String(msgCount));
+      Qualtrics.SurveyEngine.setEmbeddedData("CA_ConditionCode", conditionCode);
+      Qualtrics.SurveyEngine.setEmbeddedData("CA_CAName",        cond.caName);
+      Qualtrics.SurveyEngine.setEmbeddedData("CA_Proactive",     cond.proactive ? "1" : "0");
+      Qualtrics.SurveyEngine.setEmbeddedData("CA_HighAnthro",
+        (conditionCode === "C2_HighAnthro_Reactive" || conditionCode === "C4_HighAnthro_Proactive") ? "1" : "0");
+    } catch(e) {
+      // Qualtrics API not available (preview mode) — continue anyway
+      console.log("Embedded data save skipped (preview mode)");
+    }
+
+    // Advance to next question
+    try {
+      Qualtrics.SurveyEngine.navClick("nextButton");
+    } catch(e) {
+      // Preview fallback
+      alert("Interaction complete. In the live survey, participants will advance automatically.");
+    }
+  }
+
+  /* ── UI HELPERS ──────────────────────────────────────────────── */
+  function addBubble(role, text) {
+    var body = document.getElementById("ca-body");
+    var wrap = document.createElement("div");
+    wrap.className = "ca-msg" + (role === "user" ? " user" : "");
+
+    var av  = document.createElement("div");
+    av.className = "ca-av " + (role === "user" ? "usr" : "bot");
+    av.textContent = role === "user" ? "You" : cond.caInitial;
+
+    var bub = document.createElement("div");
+    bub.className = "ca-bub " + (role === "user" ? "usr" : "bot");
+    bub.textContent = text;
+
+    wrap.appendChild(av);
+    wrap.appendChild(bub);
+    body.appendChild(wrap);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function showTyping() {
+    var body = document.getElementById("ca-body");
+    var wrap = document.createElement("div");
+    wrap.className = "ca-msg";
+    wrap.id = "ca-typing-wrap";
+
+    var av = document.createElement("div");
+    av.className = "ca-av bot";
+    av.textContent = cond.caInitial;
+
+    var ind = document.createElement("div");
+    ind.id = "ca-typing";
+    for (var i = 0; i < 3; i++) {
+      var dot = document.createElement("div");
+      dot.className = "ca-dot";
+      ind.appendChild(dot);
+    }
+
+    wrap.appendChild(av);
+    wrap.appendChild(ind);
+    body.appendChild(wrap);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function removeTyping() {
+    var el = document.getElementById("ca-typing-wrap");
+    if (el) el.remove();
+  }
+
+  function updateCounter() {
+    var remaining = MAX_MSGS - msgCount;
+    var label = msgCount === 1 ? "1 message sent" : msgCount + " messages sent";
+    if (remaining > 0) label += " · " + remaining + " remaining";
+    else label += " · maximum reached";
+    document.getElementById("ca-counter").textContent = label;
+  }
+
+  function now() {
+    return new Date().toISOString();
+  }
+
+  /* ── START ───────────────────────────────────────────────────── */
+  // Expose caFinish globally for the button onclick
+  window.caFinish = caFinish;
+
+  // Wait for DOM
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+})();
+</script>
